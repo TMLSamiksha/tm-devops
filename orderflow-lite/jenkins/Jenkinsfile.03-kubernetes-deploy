@@ -10,11 +10,14 @@
 //   - Everything Jenkinsfile.02 assumes (Docker on PATH, Docker Pipeline
 //     plugin, a reachable registry).
 //   - `kubectl` on PATH, already pointed at the target cluster via the
-//     Jenkins agent's ambient kubeconfig (the same assumption k8s/README.md
-//     makes for a local kind/Minikube cluster). A real environment would
-//     swap this for the Kubernetes CLI plugin's `withKubeConfig` step with
-//     a kubeconfig stored as a Jenkins credential, rather than trusting
-//     whatever context happens to be active on the agent.
+//     Jenkins agent's ambient kubeconfig — confirmed working against
+//     Docker Desktop's `docker-desktop` context (see
+//     content/local-registry-setup.md); the same assumption applies for
+//     kind/Minikube if you're using one of those instead (see
+//     k8s/README.md). A real environment would swap this for the
+//     Kubernetes CLI plugin's `withKubeConfig` step with a kubeconfig
+//     stored as a Jenkins credential, rather than trusting whatever
+//     context happens to be active on the agent.
 //   - k8s/configmap.yaml, k8s/secret.yaml, k8s/mysql.yaml have already
 //     been applied at least once (see k8s/README.md's apply order) and
 //     MySQL is up. This pipeline deliberately does NOT re-apply
@@ -98,10 +101,10 @@ pipeline {
                     sh """
                         # Idempotent: makes sure the Deployment/Service exist
                         # at all (first-ever deploy) without touching MySQL.
-                        # k8s/deployment.yaml ships with a static
-                        # "orderflow-lite:local" image tag meant for manual
-                        # local use — kubectl set image below is what
-                        # actually points the cluster at THIS build's image.
+                        # k8s/deployment.yaml's default image already points
+                        # at the local registry (localhost:5000/orderflow-
+                        # lite:latest) — kubectl set image below overrides
+                        # it to THIS build's specific tag.
                         kubectl apply -f k8s/configmap.yaml -f k8s/secret.yaml
                         kubectl apply -f k8s/deployment.yaml -f k8s/service.yaml
 

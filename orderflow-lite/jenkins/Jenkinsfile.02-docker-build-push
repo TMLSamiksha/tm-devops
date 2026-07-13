@@ -13,9 +13,11 @@
 // used below).
 //
 // REGISTRY / credentials: defaults to a local, unauthenticated registry
-// (`localhost:5000`) so this runs out of the box against the kind of
-// throwaway registry you'd spin up for a local kind/Minikube lab
-// (`docker run -d -p 5000:5000 --name registry registry:2`). Point
+// (`localhost:5000`) — confirmed working end-to-end with Docker Desktop's
+// built-in Kubernetes, which shares its Docker daemon with the registry
+// container, so no extra "load the image into the cluster" step is
+// needed. See content/local-registry-setup.md for the full manual setup
+// and why kind/Minikube need that extra step and this doesn't. Point
 // REGISTRY at a real registry (Docker Hub, ECR, ACR, etc.) and set
 // DOCKER_CREDENTIALS_ID to a real Jenkins credentials ID to push
 // somewhere durable — see the Docker Push stage for exactly what changes.

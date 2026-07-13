@@ -16,12 +16,20 @@ spec:
     spec:
       containers:
         - name: orderflow-lite
-          # Built locally via the repo's Dockerfile. On kind, load it with
-          # `kind load docker-image orderflow-lite:local`; on Minikube, run
-          # `eval $(minikube docker-env)` before `docker build`, or
-          # `minikube image load orderflow-lite:local`. See k8s/README.md.
-          image: orderflow-lite:local
-          imagePullPolicy: IfNotPresent
+          # Defaults to the local registry image — confirmed working
+          # end-to-end with Docker Desktop's built-in Kubernetes, no
+          # separate "load the image into the cluster" step needed (see
+          # content/local-registry-setup.md for the full setup and why).
+          # On kind/Minikube instead, see k8s/README.md for the
+          # `kind load docker-image` / `minikube image load` equivalents.
+          image: localhost:5000/orderflow-lite:latest
+          # Always (not IfNotPresent): this points at a mutable :latest
+          # tag in a local registry you'll keep re-pushing to while
+          # iterating — without this, the node would happily keep serving
+          # whatever it cached on the first pull. Per-build-tagged images
+          # (e.g. what the Jenkinsfiles push) don't need this, since each
+          # tag is only ever pushed once.
+          imagePullPolicy: Always
           ports:
             - containerPort: 3000
           envFrom:
@@ -50,8 +58,9 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3
-          # Sized for a laptop-scale kind/Minikube cluster running two
-          # replicas of a small Express app, not for production traffic.
+          # Sized for a laptop-scale local cluster (Docker Desktop,
+          # kind, or Minikube) running two replicas of a small Express
+          # app, not for production traffic.
           resources:
             requests:
               cpu: 50m

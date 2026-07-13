@@ -1,8 +1,9 @@
-# OrderFlow-Lite on Kubernetes (kind / Minikube)
+# OrderFlow-Lite on Kubernetes (Docker Desktop / kind / Minikube)
 
-Manifests for running OrderFlow-Lite on a local single-node kind or
-Minikube cluster. Not production-hardened — see the tradeoff notes in
-`mysql.yaml` and `service.yaml` for what's deliberately simplified and why.
+Manifests for running OrderFlow-Lite on a local single-node Kubernetes
+cluster — Docker Desktop, kind, or Minikube. Not production-hardened —
+see the tradeoff notes in `mysql.yaml` and `service.yaml` for what's
+deliberately simplified and why.
 
 ## Files
 
@@ -11,16 +12,42 @@ Minikube cluster. Not production-hardened — see the tradeoff notes in
 | `configmap.yaml` | Non-secret app/DB config (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `PORT`, `WORKER_POLL_INTERVAL_MS`) |
 | `secret.yaml` | Placeholder credentials (`DB_PASSWORD`, `API_KEY`, `MYSQL_ROOT_PASSWORD`) — **replace before using outside this training course** |
 | `mysql.yaml` | MySQL Deployment + PVC + ClusterIP Service, with `sql/init.sql` mounted as an init script |
-| `deployment.yaml` | OrderFlow-Lite Deployment, 2 replicas |
+| `deployment.yaml` | OrderFlow-Lite Deployment, 2 replicas, defaults to the `localhost:5000` registry image |
 | `service.yaml` | NodePort Service exposing the app |
 
-## Build and load the image
+## Build and get the image into the cluster
 
-The app image is built locally, not pulled from a registry, so the cluster
-needs it loaded before the Deployment can start.
+`k8s/deployment.yaml` defaults to `localhost:5000/orderflow-lite:latest`
+— a local, unauthenticated registry — which is the recommended path.
+
+### Docker Desktop (recommended for this course)
+
+Docker Desktop's Kubernetes node shares the same Docker daemon as your
+`docker` CLI, so anything pushed to a `localhost` registry is immediately
+visible to the cluster — no separate load step. Full setup (starting the
+registry container, verifying it, troubleshooting) is in
+[`content/local-registry-setup.md`](../../content/local-registry-setup.md);
+the short version:
 
 ```bash
+# one-time: docker run -d --restart=always --name local-registry -p 5000:5000 registry:2
+
 # from the orderflow-lite/ repo root
+docker build -t localhost:5000/orderflow-lite:latest .
+docker push localhost:5000/orderflow-lite:latest
+```
+
+Then `kubectl apply` as normal (below) — the Deployment's default image
+already points at this registry.
+
+### kind / Minikube (alternative)
+
+kind runs each node as its own container with its own separate image
+store, and Minikube runs in its own VM/daemon — neither can see your
+host's local `docker build` cache (or a `localhost:5000` registry) without
+an explicit load step:
+
+```bash
 docker build -t orderflow-lite:local .
 
 # kind:
@@ -32,6 +59,10 @@ minikube image load orderflow-lite:local
 # eval $(minikube docker-env)
 # docker build -t orderflow-lite:local .
 ```
+
+If you go this route, also change `k8s/deployment.yaml`'s `image:` field
+to `orderflow-lite:local` (and drop `imagePullPolicy: Always`, which only
+makes sense for a mutable registry tag) before applying it.
 
 ## Apply order
 
@@ -58,6 +89,13 @@ and produces more transient "not ready" noise while you wait, so applying
 MySQL first is the cleaner path for a live demo.
 
 ## Reaching the service
+
+**Docker Desktop**: NodePorts are reachable directly at `localhost` —
+no port-forward or tunnel needed:
+
+```bash
+curl -H "x-api-key: changeme-api-key" http://localhost:30080/orders
+```
 
 **kind**: kind's default network setup does not expose NodePorts on
 `localhost` automatically unless the cluster was created with `extraPortMappings`. The simplest path on kind is `port-forward`:

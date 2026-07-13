@@ -3,8 +3,10 @@
 # NodePort vs ClusterIP tradeoff:
 #   - NodePort (used here) opens a port (30080) directly on every cluster
 #     node, reachable from the host machine without any extra tooling —
-#     convenient for a local kind/Minikube training setup where you just
-#     want `curl` to work with minimal ceremony.
+#     convenient for a local training setup where you just want `curl` to
+#     work with minimal ceremony. On Docker Desktop's Kubernetes this is
+#     reachable directly at localhost:30080; kind and Minikube need an
+#     extra step (port-forward / `minikube service`) — see k8s/README.md.
 #   - ClusterIP (the default type) is only reachable from inside the
 #     cluster. It's the right choice once there's an Ingress controller or
 #     `kubectl port-forward`/`minikube service` in front of it, and it's

@@ -114,10 +114,10 @@ pipeline {
                     sh """
                         # Idempotent: makes sure the Deployment/Service exist
                         # at all (first-ever deploy) without touching MySQL.
-                        # k8s/deployment.yaml ships with a static
-                        # "orderflow-lite:local" image tag meant for manual
-                        # local use — kubectl set image below is what
-                        # actually points the cluster at THIS build's image.
+                        # k8s/deployment.yaml's default image already points
+                        # at the local registry (localhost:5000/orderflow-
+                        # lite:latest) — kubectl set image below overrides
+                        # it to THIS build's specific tag.
                         kubectl apply -f k8s/configmap.yaml -f k8s/secret.yaml
                         kubectl apply -f k8s/deployment.yaml -f k8s/service.yaml
 
