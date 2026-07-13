@@ -5,11 +5,13 @@
 # instead of reading them from the environment. This is the GitLeaks lab
 # seed for OrderFlow-Lite — see TRAINING_SEEDS.md at the repo root.
 #
-# The key below is AWS's own published example Access Key ID
-# (used throughout AWS documentation as a non-functional placeholder,
-# e.g. https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html)
-# It is not a real, active credential.
+# The key below is a made-up, non-functional value shaped like a real AWS
+# Access Key ID (AKIA + 16 alphanumeric characters) so it trips GitLeaks'
+# aws-access-token rule. It deliberately does NOT use AWS's own published
+# example key (AKIAIOSFODNN7EXAMPLE) — GitLeaks' default config allowlists
+# any secret ending in "EXAMPLE" as a known placeholder, so that value
+# never actually gets flagged. It is not a real, active credential.
 
-AWS_ACCESS_KEY_ID="AKIAIOSFODNN7EXAMPLE"
+AWS_ACCESS_KEY_ID="AKIATRAININGSEEDVALX"
 
 echo "Notifying legacy webhook with access key ${AWS_ACCESS_KEY_ID}..."
