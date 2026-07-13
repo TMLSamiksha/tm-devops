@@ -1,0 +1,138 @@
+// OrderFlow-Lite CI/CD pipeline — stage 3 of the training buildup.
+//
+// Builds on Jenkinsfile.02-docker-build-push: keeps Checkout, Test,
+// Docker Build, and Docker Push as-is, and adds a Kubernetes Deploy stage
+// that does a rolling update of the already-running Deployment and rolls
+// back automatically if the rollout doesn't succeed — this is the
+// Module 9 (Kubernetes Deployment and Pipeline Integration) tie-in.
+//
+// Assumes:
+//   - Everything Jenkinsfile.02 assumes (Docker on PATH, Docker Pipeline
+//     plugin, a reachable registry).
+//   - `kubectl` on PATH, already pointed at the target cluster via the
+//     Jenkins agent's ambient kubeconfig (the same assumption k8s/README.md
+//     makes for a local kind/Minikube cluster). A real environment would
+//     swap this for the Kubernetes CLI plugin's `withKubeConfig` step with
+//     a kubeconfig stored as a Jenkins credential, rather than trusting
+//     whatever context happens to be active on the agent.
+//   - k8s/configmap.yaml, k8s/secret.yaml, k8s/mysql.yaml have already
+//     been applied at least once (see k8s/README.md's apply order) and
+//     MySQL is up. This pipeline deliberately does NOT re-apply
+//     k8s/mysql.yaml on every build — it's stateful infrastructure, not
+//     something you want touched by every app deploy. If it needs to
+//     change, that's a deliberate, separate action, not a side effect of
+//     shipping a new app image.
+
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        timeout(time: 15, unit: 'MINUTES')
+    }
+
+    environment {
+        IMAGE_NAME = 'orderflow-lite'
+        IMAGE_TAG  = "${env.BUILD_NUMBER}"
+        REGISTRY   = 'localhost:5000'
+        DOCKER_CREDENTIALS_ID = 'dockerhub-creds'
+        DEPLOYMENT_NAME = 'orderflow-lite'
+        CONTAINER_NAME  = 'orderflow-lite' // must match k8s/deployment.yaml's container name
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Test') {
+            steps {
+                dir('orderflow-lite') {
+                    sh 'npm ci'
+                    sh 'npm run test:ci'
+                }
+            }
+            post {
+                always {
+                    junit 'orderflow-lite/junit.xml'
+                }
+            }
+        }
+
+        stage('Docker Build') {
+            steps {
+                dir('orderflow-lite') {
+                    sh """
+                        docker build \
+                          -t ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} \
+                          -t ${REGISTRY}/${IMAGE_NAME}:latest \
+                          .
+                    """
+                }
+            }
+        }
+
+        stage('Docker Push') {
+            steps {
+                script {
+                    if (REGISTRY == 'localhost:5000') {
+                        sh """
+                            docker push ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
+                            docker push ${REGISTRY}/${IMAGE_NAME}:latest
+                        """
+                    } else {
+                        docker.withRegistry("https://${REGISTRY}", DOCKER_CREDENTIALS_ID) {
+                            docker.image("${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}").push()
+                            docker.image("${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}").push('latest')
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Kubernetes Deploy') {
+            steps {
+                dir('orderflow-lite') {
+                    sh """
+                        # Idempotent: makes sure the Deployment/Service exist
+                        # at all (first-ever deploy) without touching MySQL.
+                        # k8s/deployment.yaml ships with a static
+                        # "orderflow-lite:local" image tag meant for manual
+                        # local use — kubectl set image below is what
+                        # actually points the cluster at THIS build's image.
+                        kubectl apply -f k8s/configmap.yaml -f k8s/secret.yaml
+                        kubectl apply -f k8s/deployment.yaml -f k8s/service.yaml
+
+                        kubectl set image deployment/${DEPLOYMENT_NAME} \
+                          ${CONTAINER_NAME}=${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
+
+                        # Blocks until every replica is Ready on the new
+                        # image, or fails after the timeout — either way
+                        # this is what triggers the rollback below.
+                        kubectl rollout status deployment/${DEPLOYMENT_NAME} --timeout=120s
+                    """
+                }
+            }
+            post {
+                failure {
+                    echo "Rollout of ${IMAGE_TAG} failed readiness within the timeout — rolling back to the previous revision."
+                    sh """
+                        kubectl rollout undo deployment/${DEPLOYMENT_NAME}
+                        kubectl rollout status deployment/${DEPLOYMENT_NAME} --timeout=120s
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Deployed ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} — rollout complete, build #${env.BUILD_NUMBER}."
+        }
+        failure {
+            echo "OrderFlow-Lite build #${env.BUILD_NUMBER} failed — check the stage logs above. If this failed during Kubernetes Deploy, the cluster should already be back on the previous working revision (see the rollback step)."
+        }
+    }
+}

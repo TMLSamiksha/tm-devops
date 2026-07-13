@@ -1,0 +1,106 @@
+// OrderFlow-Lite CI pipeline — stage 1 of the training buildup.
+//
+// Scope of THIS file only: Checkout -> Test -> Build -> Run (locally).
+// Deliberately NO Docker here — image build/scan is introduced in a later
+// numbered Jenkinsfile alongside Module 4 (Docker Fundamentals and Image
+// Security). This file mirrors what a plain `git clone && npm install &&
+// npm test && npm start` looks like as a pipeline, before containers enter
+// the picture. See CLAUDE.md for the full module table.
+//
+// Assumes a Jenkins agent with Node.js 20 available on PATH. This job
+// checks out the whole tm-devops repo; all OrderFlow-Lite commands run
+// from the orderflow-lite/ subdirectory.
+
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        // Don't let a hung `npm start`/curl step block the job forever.
+        timeout(time: 15, unit: 'MINUTES')
+    }
+
+    environment {
+        // Only what's needed to boot the process for the smoke test below.
+        // /health doesn't touch the DB, so no DB_* vars are required here.
+        APP_PORT      = '3000'
+        SMOKE_API_KEY = 'smoke-test-key'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Test') {
+            steps {
+                dir('orderflow-lite') {
+                    sh 'npm ci'
+                    // test:ci runs jest with the jest-junit reporter,
+                    // producing junit.xml for the post block below.
+                    sh 'npm run test:ci'
+                }
+            }
+            post {
+                always {
+                    junit 'orderflow-lite/junit.xml'
+                }
+            }
+        }
+
+        stage('Build') {
+            steps {
+                dir('orderflow-lite') {
+                    // No compiler/bundler for this plain Node.js app, so
+                    // "build" here means: reinstall with only production
+                    // dependencies, the same scope that will actually run
+                    // (mirrors the Dockerfile's builder stage later on,
+                    // without a container). This also catches a
+                    // dependency accidentally required only via a
+                    // devDependency.
+                    sh 'npm ci --omit=dev'
+                }
+            }
+        }
+
+        stage('Run (locally)') {
+            steps {
+                // Deliberately minimal: just start the app and leave it
+                // running so you can poke it manually in a browser
+                // afterwards (e.g. http://localhost:3000/health). No
+                // automated health check and no teardown here — kill it
+                // yourself (`kill $(cat orderflow-lite/server.pid)`) when
+                // you're done, or just re-run this stage to restart it.
+                //
+                // `setsid` fully detaches the process from Jenkins' process
+                // group so it survives past the end of this step — plain
+                // `nohup ... &` alone often isn't enough, since Jenkins'
+                // ProcessTreeKiller kills leftover children by process
+                // group once a step completes.
+                //
+                // NOTE: binds a fixed host port (3000) on the Jenkins
+                // agent, so re-running this stage while a previous run is
+                // still up will fail to bind — that's expected for now.
+                dir('orderflow-lite') {
+                    sh """
+                        PORT=${APP_PORT} API_KEY=${SMOKE_API_KEY} \
+                            setsid nohup node src/index.js > server.log 2>&1 &
+                        echo \$! > server.pid
+                        echo "OrderFlow-Lite starting, PID \$(cat server.pid) — try http://localhost:${APP_PORT}/health"
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "OrderFlow-Lite build #${env.BUILD_NUMBER}: checkout, test, build, and local run all passed."
+        }
+        failure {
+            echo "OrderFlow-Lite build #${env.BUILD_NUMBER} failed — check the stage logs above."
+        }
+    }
+}

@@ -1,0 +1,175 @@
+// OrderFlow-Lite CI/CD pipeline — stage 5 of the training buildup.
+//
+// Builds on Jenkinsfile.04-trivy-scan: keeps Test, Docker Build, Trivy
+// Scan, Docker Push, and Kubernetes Deploy as-is, and inserts a GitLeaks
+// scan right after Checkout, before anything else runs — this is the
+// Module 10 (DevSecOps Pipeline Controls) tie-in. It's placed first,
+// ahead of Test/Build, because a secret-scanning gate should fail fast
+// and cheaply, before spending time on a build you're going to throw away
+// anyway.
+//
+// NOTE — this stage is EXPECTED TO FAIL on an unmodified checkout of this
+// repo. TRAINING_SEEDS.md's seeded secret (an AWS-style access key in
+// scripts/legacy-webhook-notify.sh, committed to git history) is exactly
+// what this gate exists to catch. That's the lab: a green pipeline here
+// means either the seeded secret has been remediated (removed + history
+// cleaned) or deliberately allowlisted with a documented reason (see
+// TRAINING_SEEDS.md's "Expected remediation" for Seed 2) — not that this
+// stage is broken.
+//
+// Uses the official gitleaks Docker image rather than a curl-installed
+// binary, since (unlike Trivy) gitleaks doesn't ship an equivalent
+// self-installer script — this avoids depending on an undocumented URL.
+// `detect` mode scans full git history by default (not just the working
+// tree), which is why this mounts the whole checked-out repo (containing
+// .git) rather than just orderflow-lite/.
+
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        timeout(time: 15, unit: 'MINUTES')
+    }
+
+    environment {
+        IMAGE_NAME = 'orderflow-lite'
+        IMAGE_TAG  = "${env.BUILD_NUMBER}"
+        REGISTRY   = 'localhost:5000'
+        DOCKER_CREDENTIALS_ID = 'dockerhub-creds'
+        DEPLOYMENT_NAME = 'orderflow-lite'
+        CONTAINER_NAME  = 'orderflow-lite' // must match k8s/deployment.yaml's container name
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('GitLeaks Scan') {
+            steps {
+                echo 'Scanning git history for hardcoded secrets'
+                sh '''
+                    docker run --rm \
+                      -v "$(pwd):/repo" \
+                      zricethezav/gitleaks:latest \
+                      detect --source /repo -v \
+                      --report-format json --report-path /repo/gitleaks-report.json
+                '''
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'gitleaks-report.json', allowEmptyArchive: true
+                }
+            }
+        }
+
+        stage('Test') {
+            steps {
+                dir('orderflow-lite') {
+                    sh 'npm ci'
+                    sh 'npm run test:ci'
+                }
+            }
+            post {
+                always {
+                    junit 'orderflow-lite/junit.xml'
+                }
+            }
+        }
+
+        stage('Docker Build') {
+            steps {
+                dir('orderflow-lite') {
+                    sh """
+                        docker build \
+                          -t ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} \
+                          -t ${REGISTRY}/${IMAGE_NAME}:latest \
+                          .
+                    """
+                }
+            }
+        }
+
+        stage('Trivy Scan') {
+            steps {
+                echo 'Scanning Docker image for vulnerabilities'
+                sh """
+                export PATH=\$PATH:/usr/local/bin:/opt/homebrew/bin
+                mkdir -p /tmp/trivy-bin
+                curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /tmp/trivy-bin
+                /tmp/trivy-bin/trivy image \
+                --exit-code 1 \
+                --severity HIGH,CRITICAL \
+                --ignore-unfixed \
+                --no-progress \
+                --format table \
+                ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
+                """
+            }
+        }
+
+        stage('Docker Push') {
+            steps {
+                script {
+                    if (REGISTRY == 'localhost:5000') {
+                        sh """
+                            docker push ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
+                            docker push ${REGISTRY}/${IMAGE_NAME}:latest
+                        """
+                    } else {
+                        docker.withRegistry("https://${REGISTRY}", DOCKER_CREDENTIALS_ID) {
+                            docker.image("${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}").push()
+                            docker.image("${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}").push('latest')
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Kubernetes Deploy') {
+            steps {
+                dir('orderflow-lite') {
+                    sh """
+                        # Idempotent: makes sure the Deployment/Service exist
+                        # at all (first-ever deploy) without touching MySQL.
+                        # k8s/deployment.yaml ships with a static
+                        # "orderflow-lite:local" image tag meant for manual
+                        # local use — kubectl set image below is what
+                        # actually points the cluster at THIS build's image.
+                        kubectl apply -f k8s/configmap.yaml -f k8s/secret.yaml
+                        kubectl apply -f k8s/deployment.yaml -f k8s/service.yaml
+
+                        kubectl set image deployment/${DEPLOYMENT_NAME} \
+                          ${CONTAINER_NAME}=${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
+
+                        # Blocks until every replica is Ready on the new
+                        # image, or fails after the timeout — either way
+                        # this is what triggers the rollback below.
+                        kubectl rollout status deployment/${DEPLOYMENT_NAME} --timeout=120s
+                    """
+                }
+            }
+            post {
+                failure {
+                    echo "Rollout of ${IMAGE_TAG} failed readiness within the timeout — rolling back to the previous revision."
+                    sh """
+                        kubectl rollout undo deployment/${DEPLOYMENT_NAME}
+                        kubectl rollout status deployment/${DEPLOYMENT_NAME} --timeout=120s
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Deployed ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} — rollout complete, build #${env.BUILD_NUMBER}."
+        }
+        failure {
+            echo "OrderFlow-Lite build #${env.BUILD_NUMBER} failed — check the stage logs above. If this failed during Kubernetes Deploy, the cluster should already be back on the previous working revision (see the rollback step)."
+        }
+    }
+}

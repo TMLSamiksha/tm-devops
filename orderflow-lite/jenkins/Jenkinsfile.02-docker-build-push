@@ -1,0 +1,110 @@
+// OrderFlow-Lite CI pipeline — stage 2 of the training buildup.
+//
+// Builds on Jenkinsfile.01-checkout-test-build-run: keeps Checkout and
+// Test as-is, but replaces the no-Docker "Build"/"Run (locally)" stages
+// with a real Docker image build and a push to a registry — this is the
+// Module 4 (Docker Fundamentals and Image Security) tie-in. Image
+// scanning (Trivy) is intentionally NOT in this file yet — that's the
+// next numbered Jenkinsfile.
+//
+// Assumes a Jenkins agent with Docker available on PATH (Docker-in-Docker
+// or a mounted host Docker socket) and the Docker Pipeline plugin
+// installed (provides the `docker.withRegistry` / `docker.image()` DSL
+// used below).
+//
+// REGISTRY / credentials: defaults to a local, unauthenticated registry
+// (`localhost:5000`) so this runs out of the box against the kind of
+// throwaway registry you'd spin up for a local kind/Minikube lab
+// (`docker run -d -p 5000:5000 --name registry registry:2`). Point
+// REGISTRY at a real registry (Docker Hub, ECR, ACR, etc.) and set
+// DOCKER_CREDENTIALS_ID to a real Jenkins credentials ID to push
+// somewhere durable — see the Docker Push stage for exactly what changes.
+
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        timeout(time: 15, unit: 'MINUTES')
+    }
+
+    environment {
+        IMAGE_NAME = 'orderflow-lite'
+        IMAGE_TAG  = "${env.BUILD_NUMBER}"
+        // Local, unauthenticated registry by default — see file header.
+        // Docker's daemon.json needs this host listed under
+        // "insecure-registries" unless you switch to a TLS-enabled one.
+        REGISTRY = 'localhost:5000'
+        // Only read if REGISTRY is switched to something that requires
+        // auth (see Docker Push stage) — must match a Username/Password
+        // credential configured in Jenkins (Manage Jenkins > Credentials).
+        DOCKER_CREDENTIALS_ID = 'dockerhub-creds'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Test') {
+            steps {
+                dir('orderflow-lite') {
+                    sh 'npm ci'
+                    sh 'npm run test:ci'
+                }
+            }
+            post {
+                always {
+                    junit 'orderflow-lite/junit.xml'
+                }
+            }
+        }
+
+        stage('Docker Build') {
+            steps {
+                dir('orderflow-lite') {
+                    sh """
+                        docker build \
+                          -t ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} \
+                          -t ${REGISTRY}/${IMAGE_NAME}:latest \
+                          .
+                    """
+                }
+            }
+        }
+
+        stage('Docker Push') {
+            steps {
+                script {
+                    // Local/unauthenticated registry (the default above):
+                    // no login needed, just push both tags directly.
+                    if (REGISTRY == 'localhost:5000') {
+                        sh """
+                            docker push ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
+                            docker push ${REGISTRY}/${IMAGE_NAME}:latest
+                        """
+                    } else {
+                        // Real registry: log in via Jenkins-managed
+                        // credentials, push, then always log out so the
+                        // token doesn't linger in the agent's Docker config.
+                        docker.withRegistry("https://${REGISTRY}", DOCKER_CREDENTIALS_ID) {
+                            docker.image("${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}").push()
+                            docker.image("${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}").push('latest')
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Pushed ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} (and :latest) — build #${env.BUILD_NUMBER}."
+        }
+        failure {
+            echo "OrderFlow-Lite build #${env.BUILD_NUMBER} failed — check the stage logs above."
+        }
+    }
+}
