@@ -169,6 +169,26 @@ keep re-pushing to while iterating. That means:
 - Confirm the tag actually exists in the registry: `curl
   http://localhost:5000/v2/orderflow-lite/tags/list`.
 
+### `error getting credentials - err: exec: "docker-credential-desktop": executable file not found in $PATH`
+
+This is not a registry-auth problem — `local-registry-data`'s `registry:2`
+container has no auth configured, and `localhost`/`127.0.0.0/8` never needs
+credentials. What's happening: the Docker CLI always consults whatever
+`credsStore` is set in `~/.docker/config.json` before *any* push or pull,
+regardless of target registry. On a machine with Docker Desktop, that's
+usually `"credsStore": "desktop"`, backed by a helper binary
+(`docker-credential-desktop`) that Docker Desktop installs to
+`/usr/local/bin` — if whatever shell or process is running `docker push`
+doesn't have `/usr/local/bin` on its `PATH`, the lookup fails with this
+error even though the registry itself needs no credentials at all.
+
+- In your own terminal: `which docker-credential-desktop` — if empty, add
+  `/usr/local/bin` to your shell's `PATH`.
+- In Jenkins: the agent's `PATH` is whatever's configured in Manage
+  Jenkins → System → Global properties → Environment variables, which
+  does **not** inherit your interactive shell's `PATH` — make sure
+  `/usr/local/bin` is included there too.
+
 ### Registry container won't start / port already in use
 
 - Something else is bound to 5000 (macOS's AirPlay Receiver uses 5000 on
