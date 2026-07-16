@@ -56,7 +56,7 @@ jobs:
       # moderate-severity jest-junit -> uuid finding (TRAINING_SEEDS.md) —
       # that's expected, not a bug in this step.
       - name: Trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.28.0
         with:
           scan-type: fs
           scan-ref: orderflow-lite
@@ -83,7 +83,7 @@ jobs:
       # HIGH/CRITICAL fixable findings fail this step, which stops the job
       # before the push steps below ever run.
       - name: Trivy image scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.28.0
         with:
           image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}
           format: table
