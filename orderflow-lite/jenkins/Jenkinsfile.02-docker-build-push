@@ -64,27 +64,27 @@ pipeline {
         //     }
         // }
 
-        stage('Setup Local Registry') {
-            steps {
-                script {
-                    // Only start the local registry if it's not already running.
-                    // This is a no-op if REGISTRY is set to a real registry.
-                    // if exists and not running, start it; if not exists, create and start it.
-                    def registryContainerName = 'local-registry'
-                    def registryRunning = sh(script: "docker ps --filter 'name=${registryContainerName}' --filter 'status=running' --format '{{.Names}}'", returnStdout: true).trim()
-                    if (REGISTRY == 'localhost:5000' && registryRunning != registryContainerName) {
-                        def registryExists = sh(script: "docker ps -a --filter 'name=${registryContainerName}' --format '{{.Names}}'", returnStdout: true).trim()
-                        if (registryExists == registryContainerName) {
-                            echo "Local registry container exists but is not running. Starting it..."
-                            sh "docker start ${registryContainerName}"
-                        } else {    
-                            echo "Local registry container does not exist. Creating and starting it..."
-                            sh "docker run -d -p 5000:5000 --name ${registryContainerName} registry:2"
-                        }
-                    }
-                }
-            }
-        }
+        // stage('Setup Local Registry') {
+        //     steps {
+        //         script {
+        //             // Only start the local registry if it's not already running.
+        //             // This is a no-op if REGISTRY is set to a real registry.
+        //             // if exists and not running, start it; if not exists, create and start it.
+        //             def registryContainerName = 'local-registry'
+        //             def registryRunning = sh(script: "docker ps --filter 'name=${registryContainerName}' --filter 'status=running' --format '{{.Names}}'", returnStdout: true).trim()
+        //             if (REGISTRY == 'localhost:5000' && registryRunning != registryContainerName) {
+        //                 def registryExists = sh(script: "docker ps -a --filter 'name=${registryContainerName}' --format '{{.Names}}'", returnStdout: true).trim()
+        //                 if (registryExists == registryContainerName) {
+        //                     echo "Local registry container exists but is not running. Starting it..."
+        //                     sh "docker start ${registryContainerName}"
+        //                 } else {    
+        //                     echo "Local registry container does not exist. Creating and starting it..."
+        //                     sh "docker run -d -p 5000:5000 --name ${registryContainerName} registry:2"
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
 
         stage('Docker Build') {
             steps {
@@ -99,28 +99,28 @@ pipeline {
             }
         }
 
-        stage('Docker Push') {
-            steps {
-                script {
-                    // Local/unauthenticated registry (the default above):
-                    // no login needed, just push both tags directly.
-                    if (REGISTRY == 'localhost:5000') {
-                        sh """
-                            docker push ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
-                            docker push ${REGISTRY}/${IMAGE_NAME}:latest
-                        """
-                    } else {
-                        // Real registry: log in via Jenkins-managed
-                        // credentials, push, then always log out so the
-                        // token doesn't linger in the agent's Docker config.
-                        docker.withRegistry("https://${REGISTRY}", DOCKER_CREDENTIALS_ID) {
-                            docker.image("${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}").push()
-                            docker.image("${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}").push('latest')
-                        }
-                    }
-                }
-            }
-        }
+        // stage('Docker Push') {
+        //     steps {
+        //         script {
+        //             // Local/unauthenticated registry (the default above):
+        //             // no login needed, just push both tags directly.
+        //             if (REGISTRY == 'localhost:5000') {
+        //                 sh """
+        //                     docker push ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
+        //                     docker push ${REGISTRY}/${IMAGE_NAME}:latest
+        //                 """
+        //             } else {
+        //                 // Real registry: log in via Jenkins-managed
+        //                 // credentials, push, then always log out so the
+        //                 // token doesn't linger in the agent's Docker config.
+        //                 docker.withRegistry("https://${REGISTRY}", DOCKER_CREDENTIALS_ID) {
+        //                     docker.image("${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}").push()
+        //                     docker.image("${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}").push('latest')
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
     }
 
     post {
