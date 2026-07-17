@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+
 
 # ---- Stage 1: builder -------------------------------------------------
 # Installs production-only dependencies in an isolated layer so the final
