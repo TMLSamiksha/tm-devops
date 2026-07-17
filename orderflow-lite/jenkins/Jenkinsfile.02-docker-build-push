@@ -64,6 +64,27 @@ pipeline {
             }
         }
 
+        stage('Setup Local Registry') {
+            steps {
+                script {
+                    // Only start the local registry if it's not already running.
+                    // This is a no-op if REGISTRY is set to a real registry.
+                    if (REGISTRY == 'localhost:5000') {
+                        def registryRunning = sh(
+                            script: "docker ps --filter 'name=local-registry' --format '{{.Names}}'",
+                            returnStdout: true
+                        ).trim()
+                        if (!registryRunning) {
+                            echo "Starting local registry container..."
+                            sh "docker run -d -p 5000:5000 --restart=always --name local-registry registry:2"
+                        } else {
+                            echo "Local registry container already running."
+                        }
+                    }
+                }
+            }
+        }
+
         stage('Docker Build') {
             steps {
                 dir('orderflow-lite') {
