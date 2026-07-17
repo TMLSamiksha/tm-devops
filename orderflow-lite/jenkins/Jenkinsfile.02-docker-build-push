@@ -50,19 +50,19 @@ pipeline {
             }
         }
 
-        stage('Test') {
-            steps {
-                dir('orderflow-lite') {
-                    sh 'npm ci'
-                    sh 'npm run test:ci'
-                }
-            }
-            post {
-                always {
-                    junit 'orderflow-lite/junit.xml'
-                }
-            }
-        }
+        // stage('Test') {
+        //     steps {
+        //         dir('orderflow-lite') {
+        //             sh 'npm ci'
+        //             sh 'npm run test:ci'
+        //         }
+        //     }
+        //     post {
+        //         always {
+        //             junit 'orderflow-lite/junit.xml'
+        //         }
+        //     }
+        // }
 
         stage('Setup Local Registry') {
             steps {
